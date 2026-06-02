@@ -410,6 +410,7 @@ std::string Analyst::summaryToJson(const RoundSummary& s) {
     j["bot_death_location"] = s.bot_death_location;
     j["peek_style"] = s.peek_style;
     j["contact_reaction"] = s.contact_reaction;
+    j["player_weapon"] = s.player_weapon;
     j["bot_was_flanked"] = s.bot_was_flanked;
     j["bot_death_cause"] = s.bot_death_cause;
     j["observed_patterns"] = s.observed_patterns;

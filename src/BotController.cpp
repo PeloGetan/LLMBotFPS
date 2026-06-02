@@ -253,7 +253,6 @@ void BotController::updateAimAndShoot(float dt, const Map& map, Entity& self,
         aim.preAimed = std::fabs(angleDiff(self.facing, trueAngle)) < aim.fireConeRad * 3.0f;
 
     aim.spotTimer += dt;
-    aim.fireCooldown -= dt;
 
     // Converge aim onto target (turn speed limited).
     float d = angleDiff(self.facing, trueAngle);
@@ -265,18 +264,14 @@ void BotController::updateAimAndShoot(float dt, const Map& map, Entity& self,
                                      : aim.reactionTime;
     if (aim.spotTimer < effReaction) return; // fair reaction delay
     if (dist > aim.maxRange) return;
+    if (std::fabs(angleDiff(self.facing, trueAngle)) > aim.fireConeRad) return;
 
-    float aimErr = std::fabs(angleDiff(self.facing, trueAngle));
-    if (aimErr > aim.fireConeRad) return;
-
-    if (aim.fireCooldown <= 0.0f) {
-        aim.fireCooldown = aim.fireInterval;
-        wantsShoot = true;
-        shootFrom = self.pos;
-        // Apply fixed, fair spread (tighter when holding a steady pre-aimed angle).
-        float spread = aim.preAimed ? aim.aimErrorRadSteady : aim.aimErrorRad;
-        shootAngle = trueAngle + rng().range(-spread, spread);
-    }
+    // Aim is on target & reaction satisfied. The weapon's fire rate / damage /
+    // projectile are applied by the combat layer (Game / Rollout), which also
+    // adds the bot's aim error via spawnShot. We just request a shot.
+    wantsShoot = true;
+    shootFrom = self.pos;
+    shootAngle = trueAngle;
 }
 
 void BotController::update(float dt, float roundTime, const Map& map, Entity& self,

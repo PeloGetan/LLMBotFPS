@@ -2,6 +2,7 @@
 #include "Rng.h"
 #include "Log.h"
 #include "Rollout.h"
+#include "Combat.h"
 #include "json.hpp"
 #include <algorithm>
 #include <chrono>
@@ -17,8 +18,6 @@ static const int PANEL_X = 900;
 static const int PANEL_W = SCREEN_W - PANEL_X;
 
 static const float PLAYER_SPEED = 215.0f;
-static const float PLAYER_FIRE_CD = 0.16f;
-static const float PLAYER_DMG = 36.0f;
 static const float PLAYER_RANGE = 780.0f;
 
 Game::Game() {
@@ -100,7 +99,6 @@ void Game::startRound() {
 
     roundTime = 0.0f;
     sampleTimer = 0.0f;
-    playerFireCd = 0.0f;
     playerFiredTimer = 0.0f;
     firstShotLogged = false;
     playerContactLogged = false;
@@ -108,7 +106,8 @@ void Game::startRound() {
     botHitFromOutside = false;
     engageCaptured = false;
     engagePos = {0, 0};
-    tracers.clear();
+    projectiles.clear();
+    pickupTaken.assign(map.weaponSpawns.size(), 0);
     state = State::Playing;
 
     Log::section("ROUND " + std::to_string(roundNumber) + " START");
@@ -130,6 +129,7 @@ void Game::endRound(const std::string& winner) {
                                        engageCaptured, engagePos);
 
     // Record how the round went for the bot (used by the parameter tuner / LLM).
+    lastSummary.player_weapon = weaponStats(player.weapon).name;
     lastSummary.bot_worst_hit_angle = botWorstHitAngle;
     lastSummary.bot_was_flanked = botHitFromOutside;
     if (winner == "player")
@@ -343,54 +343,40 @@ void Game::pollAnalysis() {
     state = State::Intro;
 }
 
-bool Game::hitscan(Vector2 origin, float angle, const Entity& target, float maxRange,
-                   Vector2& outHit) const {
-    if (!target.alive) return false;
-    Vector2 dir = vFromAngle(angle);
-    Vector2 to = target.pos - origin;
-    float along = vDot(to, dir);
-    if (along < 0 || along > maxRange) return false;
-    Vector2 closest = origin + dir * along;
-    float perp = vDist(closest, target.pos);
-    if (perp > target.radius) return false;
-    if (!map.hasLineOfSight(origin, target.pos)) return false;
-    outHit = target.pos;
-    return true;
-}
-
 void Game::handlePlayerCombat(float dt) {
-    playerFireCd -= dt;
     if (playerFiredTimer > 0) playerFiredTimer -= dt;
+    player.weaponCd -= dt;
 
-    bool fired = IsMouseButtonDown(MOUSE_BUTTON_LEFT) && playerFireCd <= 0.0f && player.alive;
+    bool fired = IsMouseButtonDown(MOUSE_BUTTON_LEFT) && player.weaponCd <= 0.0f &&
+                 player.alive;
     if (!fired) return;
 
-    playerFireCd = PLAYER_FIRE_CD;
+    WeaponStats ws = weaponStats(player.weapon);
+    player.weaponCd = ws.fireInterval;
     playerFiredTimer = 0.25f;
+
+    // Player aims precisely (no skill error); weapon spread still applies.
+    spawnShot(projectiles, player.pos, player.facing, player.weapon, 0, 0.0f, rng());
+
+    if (player.ammo > 0) {
+        player.ammo--;
+        if (player.ammo == 0) player.equip(WeaponType::Pistol); // out of ammo -> sidearm
+    }
 
     if (!firstShotLogged) {
         tel.add(EventType::FirstShot, roundTime, player.pos, "player", nearestName(player.pos));
         firstShotLogged = true;
     }
+}
 
-    Vector2 hit;
-    Vector2 endPoint = player.pos + vFromAngle(player.facing) * PLAYER_RANGE;
-    bool didHit = hitscan(player.pos, player.facing, bot, PLAYER_RANGE, hit);
-    if (didHit) endPoint = hit;
-    tracers.push_back({player.pos, endPoint, 0.06f, SKYBLUE});
-
-    if (didHit) {
-        // Was the bot hit from outside its field of view (i.e. flanked)?
-        float angOff = std::fabs(angleDiff(bot.facing, vAngle(player.pos - bot.pos)));
-        botWorstHitAngle = std::max(botWorstHitAngle, angOff);
-        if (angOff > botCtrl.aim.fovHalf) botHitFromOutside = true;
-
-        if (!engageCaptured) { engagePos = player.pos; engageCaptured = true; }
-        bot.damage(PLAYER_DMG);
-        botCtrl.onDamaged(player.pos); // bot reacts to the threat direction
-        tel.add(EventType::DamageEvent, roundTime, bot.pos, "player",
-                nearestName(bot.pos), PLAYER_DMG);
-        if (!bot.alive) endRound("player");
+void Game::handlePickups() {
+    for (size_t i = 0; i < map.weaponSpawns.size(); ++i) {
+        if (pickupTaken[i]) continue;
+        const WeaponPickup& wp = map.weaponSpawns[i];
+        if (player.alive && vDist(player.pos, wp.pos) < player.radius + 14.0f) {
+            player.equip(wp.type);
+            pickupTaken[i] = 1;
+        }
     }
 }
 
@@ -441,37 +427,45 @@ void Game::updatePlaying(float dt) {
         playerContactLogged = true;
     }
 
+    handlePickups();
     handlePlayerCombat(dt);
-    if (state != State::Playing) return; // round may have ended
 
-    // ---- Bot update ----
+    // ---- Bot update + firing (always pistol; rate/damage from its weapon) ----
     botCtrl.update(dt, roundTime, map, bot, player, tel, playerFiredTimer > 0.0f);
-    if (botCtrl.wantsShoot && bot.alive) {
+    bot.weaponCd -= dt;
+    if (botCtrl.wantsShoot && bot.alive && bot.weaponCd <= 0.0f) {
+        float err = botCtrl.aim.preAimed ? botCtrl.aim.aimErrorRadSteady
+                                         : botCtrl.aim.aimErrorRad;
+        spawnShot(projectiles, botCtrl.shootFrom, botCtrl.shootAngle, bot.weapon, 1, err, rng());
+        bot.weaponCd = weaponStats(bot.weapon).fireInterval;
         botFiredFx = 0.06f;
-        Vector2 hit;
-        Vector2 endPoint = botCtrl.shootFrom + vFromAngle(botCtrl.shootAngle) * botCtrl.aim.maxRange;
-        bool didHit = hitscan(botCtrl.shootFrom, botCtrl.shootAngle, player,
-                              botCtrl.aim.maxRange, hit);
-        if (didHit) endPoint = hit;
-        tracers.push_back({botCtrl.shootFrom, endPoint, 0.06f, ORANGE});
-        if (didHit) {
-            player.damage(botCtrl.aim.damagePerShot);
-            tel.add(EventType::DamageEvent, roundTime, player.pos, "bot",
-                    nearestName(player.pos), botCtrl.aim.damagePerShot);
-            if (!player.alive) { endRound("bot"); return; }
-        }
     }
     if (botFiredFx > 0) botFiredFx -= dt;
+
+    // ---- Advance projectiles and resolve hits ----
+    auto hits = stepProjectiles(projectiles, map, player, bot, dt);
+    for (const auto& h : hits) {
+        if (h.victimIsBot) {
+            float angOff = std::fabs(angleDiff(bot.facing, vAngle(h.origin - bot.pos)));
+            botWorstHitAngle = std::max(botWorstHitAngle, angOff);
+            if (angOff > botCtrl.aim.fovHalf) botHitFromOutside = true;
+            if (!engageCaptured) { engagePos = h.origin; engageCaptured = true; }
+            botCtrl.onDamaged(h.origin);
+            tel.add(EventType::DamageEvent, roundTime, bot.pos, "player",
+                    nearestName(bot.pos), h.damage);
+        } else {
+            tel.add(EventType::DamageEvent, roundTime, player.pos, "bot",
+                    nearestName(player.pos), h.damage);
+        }
+    }
+    if (!bot.alive) { endRound("player"); return; }
+    if (!player.alive) { endRound("bot"); return; }
 
     // ---- Time limit ----
     if (roundTime >= roundTimeLimit) endRound("timeout");
 }
 
 void Game::update(float dt) {
-    for (auto& t : tracers) t.life -= dt;
-    tracers.erase(std::remove_if(tracers.begin(), tracers.end(),
-                  [](const Tracer& t) { return t.life <= 0; }), tracers.end());
-
     switch (state) {
         case State::Intro:
             if (IsKeyPressed(KEY_SPACE)) startRound();
@@ -566,9 +560,24 @@ void Game::drawWorld() {
         DrawText("bot expects you", (int)e.x - 40, (int)e.y + 18, 10, Fade(YELLOW, 0.7f));
     }
 
-    // Tracers (gunfire is always visible/audible)
-    for (auto& t : tracers)
-        DrawLineEx(t.a, t.b, 2.0f, t.color);
+    // Weapon pickups (only those not yet taken this round).
+    for (size_t i = 0; i < map.weaponSpawns.size(); ++i) {
+        if (i < pickupTaken.size() && pickupTaken[i]) continue;
+        const WeaponPickup& wp = map.weaponSpawns[i];
+        Color c = (wp.type == WeaponType::Rifle) ? (Color){90, 200, 120, 255}
+                                                 : (Color){220, 160, 70, 255};
+        Rectangle rr = {wp.pos.x - 11, wp.pos.y - 11, 22, 22};
+        DrawRectangleRec(rr, Fade(c, 0.85f));
+        DrawRectangleLinesEx(rr, 2, WHITE);
+        const char* lbl = (wp.type == WeaponType::Rifle) ? "R" : "S";
+        DrawText(lbl, (int)wp.pos.x - 4, (int)wp.pos.y - 7, 16, BLACK);
+    }
+
+    // Projectiles (gunfire is visible).
+    for (const auto& p : projectiles) {
+        Color c = (p.owner == 0) ? (Color){120, 200, 255, 255} : (Color){255, 170, 90, 255};
+        DrawCircleV(p.pos, p.radius + 1.0f, c);
+    }
 
     // Fog of war: the player only sees the bot with line of sight (no wallhack),
     // unless X-ray is toggled on.
@@ -796,6 +805,10 @@ void Game::draw() {
 
     if (state == State::Playing) {
         DrawText(TextFormat("Time %.1f / %.0f", roundTime, roundTimeLimit), 10, 10, 18, WHITE);
+        WeaponStats ws = weaponStats(player.weapon);
+        const char* ammoTxt = (player.ammo < 0) ? "" : TextFormat(" x%d", player.ammo);
+        DrawText(TextFormat("Weapon: %s%s", ws.name, ammoTxt), 10, 32, 18,
+                 (Color){255, 220, 140, 255});
     }
 
     EndTextureMode();

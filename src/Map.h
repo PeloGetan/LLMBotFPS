@@ -1,9 +1,15 @@
 #pragma once
 #include "raylib.h"
 #include "Math.h"
+#include "Weapon.h"
 #include <string>
 #include <vector>
 #include <unordered_map>
+
+struct WeaponPickup {
+    Vector2 pos;
+    WeaponType type;
+};
 
 enum class Route { Unknown, Mid, LeftFlank, RightFlank };
 const char* routeName(Route r);
@@ -25,6 +31,7 @@ public:
     std::vector<Rectangle> crates;     // subset used as cover (drawn differently)
     std::unordered_map<std::string, Vector2> named;
     std::vector<Vector2> coverPoints;  // good spots to hide behind crates
+    std::vector<WeaponPickup> weaponSpawns; // weapons the player can pick up
     std::vector<NavNode> nodes;
 
     Vector2 pos(const std::string& name) const;

@@ -2,6 +2,7 @@
 #include "BotController.h"
 #include "Entity.h"
 #include "Telemetry.h"
+#include "Combat.h"
 #include "Rng.h"
 #include <algorithm>
 #include <cmath>
@@ -24,19 +25,6 @@ std::string laneHoldName(Route r) {
 
 Vector2 laneCenter(const Map& map, Route r) {
     return map.pos(laneHoldName(r));
-}
-
-// Hitscan: does a shot from `origin` at `angle` hit `target` (with LoS)?
-bool hitscan(const Map& map, Vector2 origin, float angle, const Entity& target,
-             float maxRange) {
-    if (!target.alive) return false;
-    Vector2 dir = vFromAngle(angle);
-    Vector2 to = target.pos - origin;
-    float along = vDot(to, dir);
-    if (along < 0 || along > maxRange) return false;
-    Vector2 closest = origin + dir * along;
-    if (vDist(closest, target.pos) > target.radius) return false;
-    return map.hasLineOfSight(origin, target.pos);
 }
 
 // Lightweight pathfinding move (mirrors BotController::moveTowards) for the
@@ -166,23 +154,27 @@ std::string Rollout::simulateOne(const Map& map, const PlayerModel& model,
     Telemetry dummy;
     dummy.begin();
 
-    // Simulated player skill (a strong human who pre-aims and clicks fast).
-    const float pReaction = 0.13f, pError = 0.045f, pFireCd = 0.16f;
-    const float pDmg = 36.0f, pRange = 780.0f, pSpeed = 215.0f;
-    float pSpot = 0.0f, pFire = 0.0f, pLastFire = 99.0f;
+    // Both sides use the default pistol in the rehearsal (the bot always does;
+    // the player's picked-up weapon is treated as a real-game wildcard).
+    const float pReaction = 0.16f, pError = 0.05f, pSpeed = 215.0f;
+    const float pRange = 780.0f;
+    float pSpot = 0.0f;
     PlayerNav nav;
+    std::vector<Projectile> proj;
 
     Vector2 engageGoal = profile.engageKnown ? profile.engagePos
                                              : laneCenter(map, profile.route);
     bool reached = false;
+    float pLastFire = 99.0f;
 
     for (float t = 0.0f; t < maxSeconds; t += dt) {
-        // ---- Simulated player ----
         bool canSee = player.alive && bot.alive &&
                       map.hasLineOfSight(player.pos, bot.pos) &&
                       vDist(player.pos, bot.pos) < pRange;
         pLastFire += dt;
+        player.weaponCd -= dt;
 
+        // ---- Simulated player ----
         if (!reached && vDist(player.pos, engageGoal) > 24.0f &&
             !(canSee && t > profile.firstContactTime * 0.5f)) {
             moveToward(map, player, engageGoal, pSpeed, dt, nav);
@@ -192,18 +184,12 @@ std::string Rollout::simulateOne(const Map& map, const PlayerModel& model,
                 float trueAng = vAngle(bot.pos - player.pos);
                 player.facing = trueAng;
                 pSpot += dt;
-                pFire -= dt;
-                if (pSpot >= pReaction && pFire <= 0.0f) {
-                    pFire = pFireCd;
+                if (pSpot >= pReaction && player.weaponCd <= 0.0f) {
+                    spawnShot(proj, player.pos, trueAng + rng().range(-pError, pError),
+                              WeaponType::Pistol, 0, 0.0f, rng());
+                    player.weaponCd = weaponStats(WeaponType::Pistol).fireInterval;
                     pLastFire = 0.0f;
-                    float shotAng = trueAng + rng().range(-pError, pError);
-                    if (hitscan(map, player.pos, shotAng, bot, pRange)) {
-                        bot.damage(pDmg);
-                        botCtrl.onDamaged(player.pos);
-                        if (!bot.alive) return "player";
-                    }
                 }
-                // Push or hold after contact.
                 if (profile.pushTendency > 0.5f && vDist(player.pos, bot.pos) > 90.0f)
                     moveToward(map, player, bot.pos, pSpeed * 0.8f, dt, nav);
             } else {
@@ -214,13 +200,19 @@ std::string Rollout::simulateOne(const Map& map, const PlayerModel& model,
 
         // ---- Real bot AI ----
         botCtrl.update(dt, t, map, bot, player, dummy, pLastFire < 0.25f);
-        if (botCtrl.wantsShoot && bot.alive) {
-            if (hitscan(map, botCtrl.shootFrom, botCtrl.shootAngle, player,
-                        botCtrl.aim.maxRange)) {
-                player.damage(botCtrl.aim.damagePerShot);
-                if (!player.alive) return "bot";
-            }
+        bot.weaponCd -= dt;
+        if (botCtrl.wantsShoot && bot.alive && bot.weaponCd <= 0.0f) {
+            float err = botCtrl.aim.preAimed ? botCtrl.aim.aimErrorRadSteady
+                                             : botCtrl.aim.aimErrorRad;
+            spawnShot(proj, botCtrl.shootFrom, botCtrl.shootAngle, bot.weapon, 1, err, rng());
+            bot.weaponCd = weaponStats(bot.weapon).fireInterval;
         }
+
+        // ---- Projectiles ----
+        auto hits = stepProjectiles(proj, map, player, bot, dt);
+        for (const auto& h : hits)
+            if (h.victimIsBot) botCtrl.onDamaged(h.origin);
+
         if (!player.alive) return "bot";
         if (!bot.alive) return "player";
     }

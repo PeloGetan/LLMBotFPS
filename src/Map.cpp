@@ -90,6 +90,11 @@ Map::Map() {
         {760, 500}, // long-angle cover
     };
 
+    // ---- Weapon pickups: down each flank, so grabbing one means committing
+    //      to a route (a real tactical choice). ----
+    weaponSpawns.push_back({{150, 470}, WeaponType::Rifle});
+    weaponSpawns.push_back({{760, 560}, WeaponType::Shotgun});
+
     buildNavGraph();
 }
 

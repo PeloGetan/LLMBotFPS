@@ -18,6 +18,7 @@ struct RoundSummary {
     std::string bot_death_location = "none";
     std::string peek_style = "unknown";    // "wide" / "narrow"
     std::string contact_reaction = "unknown"; // "push" / "retreat" / "hold"
+    std::string player_weapon = "Pistol";  // weapon the player used this round
     std::vector<std::string> observed_patterns;
     PlayerModel model_snapshot;
 

@@ -9,12 +9,11 @@
 #include "LLMService.h"
 #include "Strategy.h"
 #include "StrategyTuner.h"
+#include "Projectile.h"
 #include <memory>
 #include <future>
 #include <string>
 #include <vector>
-
-struct Tracer { Vector2 a, b; float life; Color color; };
 
 struct AnalysisResult {
     StrategyDecision decision;
@@ -83,8 +82,8 @@ private:
     bool botVisibleNow = false;
 
     // Combat / fx
-    std::vector<Tracer> tracers;
-    float playerFireCd = 0.0f;
+    std::vector<Projectile> projectiles;
+    std::vector<char> pickupTaken;   // per map.weaponSpawns: consumed this round
     float botFiredFx = 0.0f;
     float playerFiredTimer = 0.0f; // for bot sound cue
     float sampleTimer = 0.0f;
@@ -108,8 +107,7 @@ private:
     void update(float dt);
     void updatePlaying(float dt);
     void handlePlayerCombat(float dt);
-    bool hitscan(Vector2 origin, float angle, const Entity& target, float maxRange,
-                 Vector2& outHit) const;
+    void handlePickups();
 
     void draw();
     void drawWorld();
