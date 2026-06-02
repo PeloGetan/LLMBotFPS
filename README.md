@@ -63,16 +63,19 @@ Run the headless adaptation self-test (no window, no LLM):
 | `Esc` | Quit |
 
 **Weapons & projectiles:** shots are **projectiles** that travel (you can dodge
-by strafing — duels last long enough for tactics). You start with a **Pistol**
-(infinite ammo). Two weapons are placed down the flanks and only the **player**
-can pick them up (the bot always uses the pistol, for fairness):
+by strafing — duels last long enough for tactics). Both fighters start with a
+**Pistol** (infinite ammo). Two weapons are placed down the flanks and **either
+the player or the bot** can pick them up — equal conditions, whoever gets there
+first:
 
-- **Rifle (R)** — fast automatic, low per-shot damage, limited ammo.
-- **Shotgun (S)** — many pellets, devastating up close, weak at range, slow.
+- **Rifle (R, left flank)** — fast automatic, low per-shot damage, limited ammo.
+- **Shotgun (S, right flank)** — many pellets, devastating up close, weak at
+  range, slow.
 
-Grabbing one means committing to a flank route (a real tactical choice). When a
-picked-up weapon runs out of ammo you drop back to the pistol. Weapons and
-pickups reset every round.
+Grabbing one means committing to a flank route (a real tactical choice). The bot
+treats fetching a weapon as part of its strategy (`grab_weapon`), and the
+self-play rehearsal weighs the firepower-vs-time tradeoff. When a picked-up
+weapon runs out of ammo you drop back to the pistol. Weapons reset every round.
 
 **Fog of war:** by default you only see the bot when you have line of sight to
 it (no wallhack). When it's hidden you'll see a "bot not in sight" hint. Press

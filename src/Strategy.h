@@ -56,6 +56,7 @@ struct StrategyParams {
     float risk = 0.5f;         // willingness to take exposed angles
     float scan = 0.3f;         // how much the bot sweeps its view to check angles/flanks
     Route watch_route = Route::Mid; // lane the bot expects the player on
+    std::string grab_weapon = "none"; // "none" / "rifle" / "shotgun": fetch it first
 
     void clamp() {
         expected_contact_time_min = clampf(expected_contact_time_min, 0.0f, 30.0f);
@@ -64,6 +65,8 @@ struct StrategyParams {
         aggression = clampf(aggression, 0.0f, 1.0f);
         risk = clampf(risk, 0.0f, 1.0f);
         scan = clampf(scan, 0.0f, 1.0f);
+        if (grab_weapon != "none" && grab_weapon != "rifle" && grab_weapon != "shotgun")
+            grab_weapon = "none";
     }
 };
 
@@ -80,6 +83,13 @@ inline Route routeFromKey(const std::string& k) {
     if (k == "left_flank" || k == "left") return Route::LeftFlank;
     if (k == "right_flank" || k == "right") return Route::RightFlank;
     return Route::Mid;
+}
+
+// Maps a grab_weapon string to a WeaponType. Returns false for "none".
+inline bool grabWeaponType(const std::string& g, WeaponType& out) {
+    if (g == "rifle") { out = WeaponType::Rifle; return true; }
+    if (g == "shotgun") { out = WeaponType::Shotgun; return true; }
+    return false;
 }
 
 struct StrategyDecision {

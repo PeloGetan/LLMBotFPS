@@ -186,7 +186,7 @@ int main() {
     for (auto& r : roll)
         printf("  %-20s winRate=%.2f (%d/%d)\n", strategyName(r.decision.type),
                r.winRate, r.wins, r.games);
-    check(roll.size() == (size_t)StrategyType::COUNT, "all strategies were simulated");
+    check(roll.size() >= (size_t)StrategyType::COUNT, "all strategies were simulated");
     bool sorted = true;
     for (size_t i = 1; i < roll.size(); ++i)
         if (roll[i].winRate > roll[i - 1].winRate) sorted = false;

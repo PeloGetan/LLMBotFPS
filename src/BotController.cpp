@@ -111,6 +111,12 @@ void BotController::buildScript(const Map& map, const PlayerModel& pm) {
         script.push_back({g, s, false, 0.0f, false});
     };
 
+    // Optionally fetch a weapon first (a tactical detour the rollout evaluates).
+    WeaponType gw;
+    Vector2 gpos;
+    if (grabWeaponType(p.grab_weapon, gw) && map.weaponSpawnPos(gw, gpos))
+        moveStep(gpos, 1.0f);
+
     switch (decision.type) {
         case StrategyType::HoldCommonAngle:
             holdStep(map.pos("mid_box"), 999.0f);

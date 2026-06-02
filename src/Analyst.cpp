@@ -465,7 +465,10 @@ std::string Analyst::buildSystemPrompt() const {
           "Routes: mid, left_flank, right_flank.\n"
           "Params per candidate: hold_position, watch_route, expected_contact_time_min, "
           "expected_contact_time_max, rotate_after_seconds, aggression(0..1), risk(0..1), "
-          "scan(0..1 = how much the bot checks its flanks/back).\n\n"
+          "scan(0..1 = how much the bot checks its flanks/back), grab_weapon "
+          "(\"none\"/\"rifle\"/\"shotgun\": the bot detours to fetch that weapon first - "
+          "a Rifle (left flank) or Shotgun (right flank) - trading time for firepower; "
+          "expect the player may grab one too).\n\n"
           "Propose 2-3 VARIED candidates (e.g. one that counters the repeated route and "
           "one that anticipates a bait/flank), so the simulator has good options.\n\n"
           "Respond with STRICT JSON ONLY in this schema:\n"
@@ -500,7 +503,8 @@ std::string Analyst::buildResponseSchema() const {
             {"rotate_after_seconds", {{"type", "number"}}},
             {"aggression", {{"type", "number"}}},
             {"risk", {{"type", "number"}}},
-            {"scan", {{"type", "number"}}}
+            {"scan", {{"type", "number"}}},
+            {"grab_weapon", {{"type", "string"}, {"enum", {"none", "rifle", "shotgun"}}}}
         }},
         {"required", {"hold_position", "watch_route", "aggression", "risk", "scan"}}
     };
@@ -611,6 +615,7 @@ static StrategyParams parseParamsObject(const json& sp, const Map& map) {
     p.aggression = (float)sp.value("aggression", 0.5);
     p.risk = (float)sp.value("risk", 0.5);
     p.scan = (float)sp.value("scan", 0.4);
+    p.grab_weapon = sp.value("grab_weapon", std::string("none"));
     p.watch_route = routeFromKey(sp.value("watch_route", std::string("mid")));
     if (map.named.find(p.hold_position) == map.named.end())
         p.hold_position = "mid_box";

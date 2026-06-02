@@ -47,6 +47,9 @@ public:
 
     int nearestNode(Vector2 p) const;
 
+    // Position of the first pickup of a given weapon type. Returns false if none.
+    bool weaponSpawnPos(WeaponType t, Vector2& out) const;
+
     // Path of node indices from start node to goal node (Dijkstra). Empty if none.
     std::vector<int> findPath(int startNode, int goalNode) const;
 

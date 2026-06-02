@@ -74,6 +74,7 @@ std::string Game::decisionToJson(const StrategyDecision& d) const {
     p["aggression"] = std::round(d.params.aggression * 100) / 100.0;
     p["risk"] = std::round(d.params.risk * 100) / 100.0;
     p["scan"] = std::round(d.params.scan * 100) / 100.0;
+    p["grab_weapon"] = d.params.grab_weapon;
     j["strategy_params"] = p;
     return j.dump(2);
 }
@@ -370,11 +371,16 @@ void Game::handlePlayerCombat(float dt) {
 }
 
 void Game::handlePickups() {
+    // Both the player and the bot can grab weapons (equal conditions). Whoever
+    // reaches the pickup first this round takes it.
     for (size_t i = 0; i < map.weaponSpawns.size(); ++i) {
         if (pickupTaken[i]) continue;
         const WeaponPickup& wp = map.weaponSpawns[i];
         if (player.alive && vDist(player.pos, wp.pos) < player.radius + 14.0f) {
             player.equip(wp.type);
+            pickupTaken[i] = 1;
+        } else if (bot.alive && vDist(bot.pos, wp.pos) < bot.radius + 14.0f) {
+            bot.equip(wp.type);
             pickupTaken[i] = 1;
         }
     }
@@ -438,6 +444,10 @@ void Game::updatePlaying(float dt) {
                                          : botCtrl.aim.aimErrorRad;
         spawnShot(projectiles, botCtrl.shootFrom, botCtrl.shootAngle, bot.weapon, 1, err, rng());
         bot.weaponCd = weaponStats(bot.weapon).fireInterval;
+        if (bot.ammo > 0) {
+            bot.ammo--;
+            if (bot.ammo == 0) bot.equip(WeaponType::Pistol);
+        }
         botFiredFx = 0.06f;
     }
     if (botFiredFx > 0) botFiredFx -= dt;
@@ -691,6 +701,9 @@ void Game::drawDebugPanel() {
              routeKey(currentDecision.params.watch_route),
              currentDecision.params.hold_position.c_str(),
              botCtrl.phaseLabel());
+    DrawText(buf, x, y, 11, WHITE); y += 14;
+    snprintf(buf, sizeof(buf), "grab=%s  bot weapon=%s",
+             currentDecision.params.grab_weapon.c_str(), weaponStats(bot.weapon).name);
     DrawText(buf, x, y, 11, WHITE); y += 14;
     snprintf(buf, sizeof(buf), "aggr=%.2f risk=%.2f scan=%.2f rotate=%.1fs conf=%.2f",
              currentDecision.params.aggression, currentDecision.params.risk,

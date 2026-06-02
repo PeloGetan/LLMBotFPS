@@ -149,6 +149,12 @@ void Map::buildNavGraph() {
     }
 }
 
+bool Map::weaponSpawnPos(WeaponType t, Vector2& out) const {
+    for (const auto& w : weaponSpawns)
+        if (w.type == t) { out = w.pos; return true; }
+    return false;
+}
+
 int Map::nearestNode(Vector2 p) const {
     int best = 0;
     float bestD = std::numeric_limits<float>::max();

@@ -134,6 +134,24 @@ std::vector<StrategyDecision> Rollout::buildCandidates(const Map& map,
         d.params.clamp();
         out.push_back(d);
     }
+
+    // Variants that fetch a weapon first (firepower vs. time-spent tradeoff).
+    for (StrategyType base : {StrategyType::AggressivePush, StrategyType::HoldOffAngle}) {
+        for (const char* g : {"rifle", "shotgun"}) {
+            StrategyDecision d;
+            d.type = base;
+            d.source = "rollout";
+            d.confidence = model.confidence;
+            d.params.watch_route = r;
+            d.params.hold_position =
+                (base == StrategyType::HoldOffAngle) ? "crate_off_angle" : laneHoldName(r);
+            d.params.aggression = (base == StrategyType::AggressivePush) ? 0.9f : 0.45f;
+            d.params.scan = 0.4f;
+            d.params.grab_weapon = g;
+            d.params.clamp();
+            out.push_back(d);
+        }
+    }
     return out;
 }
 
@@ -166,6 +184,19 @@ std::string Rollout::simulateOne(const Map& map, const PlayerModel& model,
                                              : laneCenter(map, profile.route);
     bool reached = false;
     float pLastFire = 99.0f;
+    std::vector<char> taken(map.weaponSpawns.size(), 0);
+
+    auto doPickups = [&]() {
+        for (size_t i = 0; i < map.weaponSpawns.size(); ++i) {
+            if (taken[i]) continue;
+            const WeaponPickup& wp = map.weaponSpawns[i];
+            if (player.alive && vDist(player.pos, wp.pos) < player.radius + 14.0f) {
+                player.equip(wp.type); taken[i] = 1;
+            } else if (bot.alive && vDist(bot.pos, wp.pos) < bot.radius + 14.0f) {
+                bot.equip(wp.type); taken[i] = 1;
+            }
+        }
+    };
 
     for (float t = 0.0f; t < maxSeconds; t += dt) {
         bool canSee = player.alive && bot.alive &&
@@ -173,6 +204,7 @@ std::string Rollout::simulateOne(const Map& map, const PlayerModel& model,
                       vDist(player.pos, bot.pos) < pRange;
         pLastFire += dt;
         player.weaponCd -= dt;
+        doPickups();
 
         // ---- Simulated player ----
         if (!reached && vDist(player.pos, engageGoal) > 24.0f &&
@@ -186,8 +218,9 @@ std::string Rollout::simulateOne(const Map& map, const PlayerModel& model,
                 pSpot += dt;
                 if (pSpot >= pReaction && player.weaponCd <= 0.0f) {
                     spawnShot(proj, player.pos, trueAng + rng().range(-pError, pError),
-                              WeaponType::Pistol, 0, 0.0f, rng());
-                    player.weaponCd = weaponStats(WeaponType::Pistol).fireInterval;
+                              player.weapon, 0, 0.0f, rng());
+                    player.weaponCd = weaponStats(player.weapon).fireInterval;
+                    if (player.ammo > 0) { player.ammo--; if (player.ammo == 0) player.equip(WeaponType::Pistol); }
                     pLastFire = 0.0f;
                 }
                 if (profile.pushTendency > 0.5f && vDist(player.pos, bot.pos) > 90.0f)
@@ -206,6 +239,7 @@ std::string Rollout::simulateOne(const Map& map, const PlayerModel& model,
                                              : botCtrl.aim.aimErrorRad;
             spawnShot(proj, botCtrl.shootFrom, botCtrl.shootAngle, bot.weapon, 1, err, rng());
             bot.weaponCd = weaponStats(bot.weapon).fireInterval;
+            if (bot.ammo > 0) { bot.ammo--; if (bot.ammo == 0) bot.equip(WeaponType::Pistol); }
         }
 
         // ---- Projectiles ----
