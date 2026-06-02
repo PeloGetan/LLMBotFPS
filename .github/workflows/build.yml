@@ -1,0 +1,71 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: # allow manual runs for testing
+
+permissions:
+  contents: write # needed to create releases
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      # MinGW-w64 (msvcrt) toolchain matching the vendored prebuilt raylib.
+      - name: Setup MSYS2 / MinGW64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Run logic self-test
+        run: ./build/bin/sim_test.exe
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $pkg = "LLMBotFPS-${{ github.ref_name }}-win64"
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+          Copy-Item build/bin/LLMBotFPS.exe $pkg/
+          Copy-Item config.json $pkg/
+          Copy-Item tools/fetch_llm.ps1 $pkg/
+          Copy-Item README.md $pkg/
+          Compress-Archive -Path "$pkg/*" -DestinationPath "$pkg.zip" -Force
+          Write-Host "Packaged $pkg.zip"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMBotFPS-${{ github.ref_name }}-win64
+          path: LLMBotFPS-${{ github.ref_name }}-win64.zip
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: LLMBotFPS-${{ github.ref_name }}-win64.zip
+          generate_release_notes: true
+          body: |
+            Standalone Windows build (MinGW, statically linked).
+
+            - Run `LLMBotFPS.exe` — the game starts immediately on its self-play AI.
+            - On first launch it auto-downloads the local LLM (llama.cpp server +
+              ~1 GB GGUF model) via `fetch_llm.ps1`; the LLM is not bundled.
+            - Set `"llm_autodownload": false` in `config.json` to disable that.
