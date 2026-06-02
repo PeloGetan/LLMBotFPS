@@ -426,6 +426,17 @@ void BotController::update(float dt, float roundTime, const Map& map, Entity& se
         }
     }
 
+    // ---- Keep spacing: never crowd the player closer than two player-diameters.
+    {
+        float minSep = player.radius * 4.0f;
+        Vector2 away = self.pos - player.pos;
+        float d = vLen(away);
+        if (d > 0.001f && d < minSep) {
+            Vector2 desired = player.pos + (away / d) * minSep;
+            if (!map.collides(desired, self.radius)) self.pos = desired;
+        }
+    }
+
     // ---- Facing ----
     if (seesPlayer) {
         // aim handles facing
