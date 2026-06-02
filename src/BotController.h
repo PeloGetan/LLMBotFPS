@@ -73,6 +73,14 @@ private:
     bool rotateMoving = false;
     float rotateTimer = 0.0f;
 
+    // Combat movement / leading / prefire.
+    Vector2 prevPlayerPos{0, 0};
+    Vector2 playerVel{0, 0};
+    bool havePrevPlayer = false;
+    int strafeDir = 1;
+    float strafeTimer = 0.0f;
+    float prefireTimer = 0.0f;
+
     float roundClock = 0.0f;
     float scanPhase = 0.0f;
     bool loggedContact = false;

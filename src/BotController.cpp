@@ -76,6 +76,11 @@ void BotController::beginRound(const Map& map, const StrategyDecision& d,
     chasing = false;
     roundClock = 0.0f;
     scanPhase = 0.0f;
+    havePrevPlayer = false;
+    playerVel = {0, 0};
+    strafeDir = (rng().f01() < 0.5f) ? 1 : -1;
+    strafeTimer = 0.0f;
+    prefireTimer = 0.0f;
     alertTimer = 0.0f;
     inRotateWatch = false;
     rotateMoving = false;
@@ -248,9 +253,12 @@ void BotController::updateAimAndShoot(float dt, const Map& map, Entity& self,
     wantsShoot = false;
     if (!seesPlayer) { aim.spotTimer = 0.0f; return; }
 
-    Vector2 to = player.pos - self.pos;
-    float trueAngle = vAngle(to);
-    float dist = vLen(to);
+    float dist = vDist(player.pos, self.pos);
+    // Lead the target: aim where the player will be when the projectile arrives.
+    float projSpeed = weaponStats(self.weapon).projectileSpeed;
+    float tHit = dist / std::max(1.0f, projSpeed);
+    Vector2 aimPoint = player.pos + playerVel * (tHit * 0.9f);
+    float trueAngle = vAngle(aimPoint - self.pos);
 
     // On the first frame of seeing the player, check whether the bot was already
     // pre-aiming that spot (i.e. it learned where the player peeks). A held,
@@ -319,6 +327,14 @@ void BotController::update(float dt, float roundTime, const Map& map, Entity& se
         loggedCover = true;
     }
 
+    // ---- Track player velocity (for leading shots) ----
+    if (havePrevPlayer && dt > 1e-4f) {
+        Vector2 v = (player.pos - prevPlayerPos) / dt;
+        playerVel = playerVel * 0.6f + v * 0.4f; // smoothed
+    }
+    prevPlayerPos = player.pos;
+    havePrevPlayer = true;
+
     // ---- In-round alert handling ----
     if (alertTimer > 0.0f) alertTimer -= dt;
     if (seesPlayer) alertTimer = 0.0f; // threat acquired directly
@@ -340,10 +356,33 @@ void BotController::update(float dt, float roundTime, const Map& map, Entity& se
     float scanScale = 1.0f;
 
     switch (mode) {
-        case Mode::Engage:
-            // See the player but not aggressive: hold ground and shoot.
-            phaseName = "engage";
+        case Mode::Engage: {
+            // See the player: strafe to dodge incoming fire while shooting, keeping
+            // the duel at a comfortable distance and line of sight.
+            phaseName = "strafe";
+            strafeTimer -= dt;
+            if (strafeTimer <= 0.0f) {
+                strafeTimer = rng().range(0.35f, 0.8f);
+                if (rng().chance(0.45f)) strafeDir = -strafeDir;
+            }
+            Vector2 toP = player.pos - self.pos;
+            float dd = vLen(toP);
+            Vector2 fwd = (dd > 0.01f) ? toP / dd : Vector2{1, 0};
+            Vector2 perp = {-fwd.y, fwd.x};
+            float radial = (dd > 340.0f) ? 0.6f : (dd < 150.0f ? -0.6f : 0.0f);
+            Vector2 dirv = vNorm(perp * (float)strafeDir + fwd * radial);
+            float spd = moveSpeed * 0.8f;
+            Vector2 step = dirv * (spd * dt);
+            if (!map.collides(self.pos + step, self.radius)) {
+                self.pos += step;
+            } else {
+                strafeDir = -strafeDir; // bounced off a wall: reverse strafe
+                Vector2 alt = perp * (float)strafeDir * (spd * dt);
+                if (!map.collides(self.pos + alt, self.radius)) self.pos += alt;
+            }
+            faceThreat = player.pos;
             break;
+        }
 
         case Mode::Chase:
             moveTowards(dt, map, self, lastSeenPos, 1.0f);
@@ -459,4 +498,30 @@ void BotController::update(float dt, float roundTime, const Map& map, Entity& se
 
     // ---- Combat ----
     updateAimAndShoot(dt, map, self, player);
+
+    // ---- Prefire: shoot a likely spot before the player fully appears ----
+    // Strongest right after losing sight (catch the re-peek), or while holding a
+    // pre-aimed angle inside the expected contact window.
+    prefireTimer -= dt;
+    if (!wantsShoot && self.alive && player.alive && prefireTimer <= 0.0f) {
+        bool justLost = everSeen && timeSinceSeen < 0.9f;
+        bool contactWindow = (mode == Mode::Script || mode == Mode::Rotate) &&
+                             roundTime >= decision.params.expected_contact_time_min &&
+                             roundTime <= decision.params.expected_contact_time_max;
+        if (justLost || contactWindow) {
+            Vector2 threat = justLost ? lastSeenPos : watchPoint;
+            if (map.hasLineOfSight(self.pos, threat) &&
+                vDist(self.pos, threat) < aim.maxRange) {
+                float ta = vAngle(threat - self.pos);
+                // Only prefire if roughly already looking that way (no instant snap).
+                if (std::fabs(angleDiff(self.facing, ta)) < 0.5f) {
+                    wantsShoot = true;
+                    shootFrom = self.pos;
+                    shootAngle = ta;
+                    aim.preAimed = false; // prefire is a guess, not a locked aim
+                    prefireTimer = rng().range(0.5f, 1.1f);
+                }
+            }
+        }
+    }
 }
