@@ -1,0 +1,12 @@
+/build/
+*.obj
+*.exe
+*.o
+*.a
+!third_party/raylib/lib/*.a
+# Local LLM binaries / models are large and not committed.
+/llm/*.exe
+/llm/*.gguf
+/llm/*.dll
+llmbotfps_log.txt
+llmtest_log.txt

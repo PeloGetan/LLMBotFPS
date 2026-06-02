@@ -1,0 +1,11 @@
+{
+  "llm_enabled": true,
+  "llm_autostart_server": true,
+  "llm_autodownload": true,
+  "llm_server_path": "llm/llama-server.exe",
+  "model_path": "llm/model.gguf",
+  "server_url": "http://127.0.0.1:48291/v1/chat/completions",
+  "llm_timeout_seconds": 30,
+  "win_streak_goal": 10,
+  "round_time_limit": 30.0
+}
