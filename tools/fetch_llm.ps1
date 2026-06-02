@@ -6,7 +6,10 @@
 #   powershell -ExecutionPolicy Bypass -File tools\fetch_llm.ps1 -Dest build\bin\llm
 param(
     [string]$Dest = "build\bin\llm",
-    [string]$ModelUrl = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+    # Backend: "vulkan" (GPU, any vendor), "cpu", or "cuda-12.4"/"cuda-13.3" (NVIDIA).
+    [string]$Backend = "vulkan",
+    [string]$ModelUrl = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+    [switch]$ForceModel
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,10 +17,11 @@ New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 $tmp = Join-Path $env:TEMP "llmbot_fetch"
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 
-Write-Host "Resolving latest llama.cpp CPU (win-x64) release..."
+Write-Host "Resolving latest llama.cpp ($Backend, win-x64) release..."
 $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest" -Headers @{ "User-Agent" = "fetch-llm" }
-$asset = $rel.assets | Where-Object { $_.name -match "win-cpu-x64\.zip$" } | Select-Object -First 1
-if (-not $asset) { throw "Could not find win-cpu-x64 asset in release $($rel.tag_name)" }
+$pattern = "win-$Backend-x64\.zip$"
+$asset = $rel.assets | Where-Object { $_.name -match $pattern } | Select-Object -First 1
+if (-not $asset) { throw "Could not find $pattern asset in release $($rel.tag_name)" }
 Write-Host "  $($rel.tag_name): $($asset.name) ($([math]::Round($asset.size/1MB,1)) MB)"
 
 $zip = Join-Path $tmp "llama-cpu.zip"
@@ -33,12 +37,16 @@ $binDir = $server.Directory.FullName
 Write-Host "Copying server + runtime DLLs from $binDir ..."
 Copy-Item -Path (Join-Path $binDir "*") -Destination $Dest -Recurse -Force
 
-Write-Host "Downloading model:"
-Write-Host "  $ModelUrl"
 $model = Join-Path $Dest "model.gguf"
-Invoke-WebRequest -Uri $ModelUrl -OutFile $model -UseBasicParsing
-$mb = [math]::Round((Get-Item $model).Length / 1MB, 1)
-Write-Host "Model saved: $model ($mb MB)"
+if ((Test-Path $model) -and -not $ForceModel) {
+    Write-Host "Model already present, skipping download: $model"
+} else {
+    Write-Host "Downloading model:"
+    Write-Host "  $ModelUrl"
+    Invoke-WebRequest -Uri $ModelUrl -OutFile $model -UseBasicParsing
+    $mb = [math]::Round((Get-Item $model).Length / 1MB, 1)
+    Write-Host "Model saved: $model ($mb MB)"
+}
 
 Write-Host ""
 Write-Host "Done. Files in ${Dest}:"

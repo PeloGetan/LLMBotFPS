@@ -82,7 +82,8 @@ void LLMService::startServerIfConfigured() {
         << " -m \"" << config.model_path << "\""
         << " --host " << u.host
         << " --port " << u.port
-        << " -c 4096";
+        << " -c 4096"
+        << " -ngl " << config.llm_gpu_layers; // offload layers to GPU (Vulkan/CUDA build)
     std::string cmdline = cmd.str();
     std::vector<char> buf(cmdline.begin(), cmdline.end());
     buf.push_back('\0');

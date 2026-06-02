@@ -191,9 +191,24 @@ You can also run it manually (from the repo root or next to the exe):
 powershell -ExecutionPolicy Bypass -File tools\fetch_llm.ps1 -Dest build\bin\llm
 ```
 
-This fetches the latest `llama-server` (win-cpu-x64) and
-`Qwen2.5-1.5B-Instruct` (GGUF, ~1 GB). Swap `-ModelUrl` for a different model
-(e.g. a 0.5B for faster, weaker responses). Layout:
+This fetches the latest `llama-server` and `Qwen2.5-1.5B-Instruct` (GGUF, ~1 GB).
+
+**GPU acceleration:** by default it downloads the **Vulkan** build, which runs on
+the GPU (NVIDIA / AMD / Intel) with no CUDA toolkit needed. The game launches the
+server with `-ngl <llm_gpu_layers>` (default 999 = offload all layers), so on a
+modern GPU the between-round analysis takes well under a second instead of several
+seconds on CPU. Choose a backend with `-Backend`:
+
+```powershell
+# GPU (default, any vendor):
+powershell -ExecutionPolicy Bypass -File tools\fetch_llm.ps1 -Backend vulkan
+# CPU only:
+powershell -ExecutionPolicy Bypass -File tools\fetch_llm.ps1 -Backend cpu
+```
+
+Set `"llm_gpu_layers": 0` in `config.json` to force CPU even with a GPU build.
+Swap `-ModelUrl` for a different model (e.g. a 0.5B for faster, weaker responses).
+Layout:
 
 ```
 build/bin/

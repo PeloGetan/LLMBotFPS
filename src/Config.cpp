@@ -18,6 +18,7 @@ Config Config::load(const std::string& path) {
         c.model_path = j.value("model_path", c.model_path);
         c.server_url = j.value("server_url", c.server_url);
         c.llm_timeout_seconds = j.value("llm_timeout_seconds", c.llm_timeout_seconds);
+        c.llm_gpu_layers = j.value("llm_gpu_layers", c.llm_gpu_layers);
         c.win_streak_goal = j.value("win_streak_goal", c.win_streak_goal);
         c.round_time_limit = j.value("round_time_limit", c.round_time_limit);
     } catch (...) {

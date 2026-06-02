@@ -9,6 +9,7 @@ struct Config {
     std::string model_path = "llm/model.gguf";
     std::string server_url = "http://127.0.0.1:48291/v1/chat/completions";
     int llm_timeout_seconds = 30;
+    int llm_gpu_layers = 999; // layers to offload to GPU (-ngl); 0 = CPU only
     int win_streak_goal = 10;
     float round_time_limit = 30.0f;
 
