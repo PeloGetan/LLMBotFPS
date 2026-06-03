@@ -599,10 +599,10 @@ void Game::drawScene3D() {
         DrawCubeWiresV(ctr, {16, 16, 16}, WHITE);
     }
 
-    // Bot: drawn only when the player can see it; walls also occlude it via depth.
-    if (bot.alive && botVisibleNow) {
-        Color bc = (xray && !los) ? (Color){200, 80, 120, 255} : (Color){225, 60, 60, 255};
-        DrawCylinder(w3(bot.pos, 0), bot.radius, bot.radius, ENT_H, 18, bc);
+    // Bot: always drawn; the walls naturally occlude it via the depth buffer
+    // (no artificial fog of war needed in first person).
+    if (bot.alive) {
+        DrawCylinder(w3(bot.pos, 0), bot.radius, bot.radius, ENT_H, 18, (Color){225, 60, 60, 255});
         DrawCylinderWires(w3(bot.pos, 0), bot.radius, bot.radius, ENT_H, 18,
                           (Color){40, 20, 20, 255});
         Vector2 nf = bot.pos + vFromAngle(bot.facing) * (bot.radius + 8);
@@ -690,8 +690,6 @@ void Game::drawHud() {
     }
 
     if (xray) DrawText("X-RAY ON", PANEL_X - 96, 10, 16, (Color){255, 120, 160, 255});
-    else if (!botVisibleNow) DrawText("bot not in sight", cx - 50, cy + 16, 14,
-                                      (Color){150, 155, 165, 255});
 }
 
 static int drawWrapped(const std::string& text, int x, int y, int width, int fontSize,
