@@ -1,6 +1,6 @@
 # Adaptive 1v1 Bot Prototype
 
-A small, top-down 1v1 tactical-duel prototype where you must **win 10 rounds in a
+A small, **first-person 3D** 1v1 tactical-duel prototype where you must **win 10 rounds in a
 row** against a bot that **analyzes your behavior between rounds and adapts its
 strategy**. The bot does not cheat (no wallhack, no growing aim accuracy, no
 shrinking reaction time) — it gets *more specific* about you: your routes, your
@@ -54,8 +54,8 @@ Run the headless adaptation self-test (no window, no LLM):
 
 | Key | Action |
 |-----|--------|
-| `WASD` | Move |
-| Mouse | Aim |
+| `WASD` | Move (relative to where you look) |
+| Mouse | Look around (first-person) |
 | Left mouse | Shoot |
 | `SPACE` | Start the next round (from the intro screen) |
 | `X` | Toggle **X-ray** (see the bot through walls — a debug cheat) |

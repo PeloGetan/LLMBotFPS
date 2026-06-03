@@ -95,9 +95,15 @@ private:
     bool analysisRunning = false;
 
     // Resizable-window support: render to a fixed virtual resolution, then
-    // letterbox-scale it to the actual window. Mouse is mapped back to virtual.
+    // letterbox-scale it to the actual window.
     RenderTexture2D renderTarget{};
     Vector2 virtualMouse{0, 0};
+
+    // First-person 3D rendering. Gameplay stays on the 2D ground plane; the
+    // scene is rendered in 3D and the camera sits at the player's eyes.
+    RenderTexture2D sceneTex{};
+    Camera3D cam{};
+    float camPitch = 0.0f;
 
     void startRound();
     void endRound(const std::string& winner);
@@ -110,8 +116,10 @@ private:
     void handlePickups();
 
     void draw();
-    void drawWorld();
-    void drawEntity(const Entity& e, Color c, bool drawFov);
+    void drawScene3D();
+    void drawMinimap();
+    void drawHud();
+    void updateCamera();
     void drawDebugPanel();
 
     std::string decisionToJson(const StrategyDecision& d) const;

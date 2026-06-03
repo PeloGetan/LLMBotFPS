@@ -3,6 +3,7 @@
 #include "Log.h"
 #include "Rollout.h"
 #include "Combat.h"
+#include "rlgl.h"
 #include "json.hpp"
 #include <algorithm>
 #include <chrono>
@@ -19,6 +20,15 @@ static const int PANEL_W = SCREEN_W - PANEL_X;
 
 static const float PLAYER_SPEED = 215.0f;
 static const float PLAYER_RANGE = 780.0f;
+
+// First-person 3D constants (1 world unit == 1 map pixel).
+static const float WALL_H = 78.0f;
+static const float EYE_H = 30.0f;
+static const float ENT_H = 42.0f;
+static const float PROJ_Y = 24.0f;
+static const float MOUSE_SENS = 0.0026f;
+
+static inline Vector3 w3(Vector2 p, float y) { return {p.x, y, p.y}; }
 
 Game::Game() {
     Log::init("llmbotfps_log.txt");
@@ -46,6 +56,18 @@ Game::Game() {
     nextDecision.reason = "Initial round: no data yet, holding a common mid angle.";
     nextDecision.source = "default";
     currentDecision = nextDecision;
+
+    // Place entities so the intro 3D view is sensible before the first round.
+    player.reset(map.pos("player_spawn"));
+    player.facing = PI / 2.0f;
+    bot.reset(map.pos("bot_spawn"));
+    bot.facing = -PI / 2.0f;
+
+    cam.position = {player.pos.x, EYE_H, player.pos.y};
+    cam.target = {player.pos.x, EYE_H, player.pos.y + 1.0f};
+    cam.up = {0, 1, 0};
+    cam.fovy = 70.0f;
+    cam.projection = CAMERA_PERSPECTIVE;
 }
 
 std::string Game::nearestName(Vector2 p) const {
@@ -389,12 +411,19 @@ void Game::handlePickups() {
 void Game::updatePlaying(float dt) {
     roundTime += dt;
 
-    // ---- Player movement ----
+    // ---- First-person look (mouse) ----
+    Vector2 md = GetMouseDelta();
+    player.facing += md.x * MOUSE_SENS;
+    camPitch = clampf(camPitch - md.y * MOUSE_SENS, -0.9f, 0.9f);
+
+    // ---- Movement relative to where the player is looking ----
+    Vector2 fwd = vFromAngle(player.facing);   // forward on the ground plane
+    Vector2 right = {-fwd.y, fwd.x};            // strafe axis
     Vector2 mv{0, 0};
-    if (IsKeyDown(KEY_W)) mv.y -= 1;
-    if (IsKeyDown(KEY_S)) mv.y += 1;
-    if (IsKeyDown(KEY_A)) mv.x -= 1;
-    if (IsKeyDown(KEY_D)) mv.x += 1;
+    if (IsKeyDown(KEY_W)) mv += fwd;
+    if (IsKeyDown(KEY_S)) mv += fwd * -1.0f;
+    if (IsKeyDown(KEY_D)) mv += right;
+    if (IsKeyDown(KEY_A)) mv += right * -1.0f;
     if (mv.x != 0 || mv.y != 0) {
         mv = vNorm(mv);
         Vector2 step = mv * (PLAYER_SPEED * dt);
@@ -406,13 +435,6 @@ void Game::updatePlaying(float dt) {
             if (!map.collides(nx, player.radius)) player.pos = nx;
             else if (!map.collides(ny, player.radius)) player.pos = ny;
         }
-    }
-
-    // Aim toward mouse (only when cursor is over the play area).
-    Vector2 m = virtualMouse;
-    if (m.x < PANEL_X) {
-        Vector2 aimDir = m - player.pos;
-        if (vLenSq(aimDir) > 1.0f) player.facing = vAngle(aimDir);
     }
 
     // ---- Telemetry sampling ----
@@ -476,6 +498,13 @@ void Game::updatePlaying(float dt) {
 }
 
 void Game::update(float dt) {
+    // Capture the mouse for first-person look only while actually playing.
+    if (state == State::Playing) {
+        if (!IsCursorHidden()) DisableCursor();
+    } else {
+        if (IsCursorHidden()) EnableCursor();
+    }
+
     switch (state) {
         case State::Intro:
             if (IsKeyPressed(KEY_SPACE)) startRound();
@@ -512,102 +541,157 @@ void Game::update(float dt) {
 
     if (IsKeyPressed(KEY_L) && config.llm_enabled)
         llmReachable = llm->serverReachable();
+
+    updateCamera();
 }
 
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
-void Game::drawEntity(const Entity& e, Color c, bool drawFov) {
-    if (!e.alive) {
-        DrawCircleLines((int)e.pos.x, (int)e.pos.y, e.radius, Fade(c, 0.5f));
-        DrawText("X", (int)e.pos.x - 4, (int)e.pos.y - 6, 14, Fade(c, 0.6f));
-        return;
-    }
-    if (drawFov) {
-        float fov = botCtrl.aim.fovHalf;
-        Vector2 l = e.pos + vFromAngle(e.facing - fov) * 220.0f;
-        Vector2 r = e.pos + vFromAngle(e.facing + fov) * 220.0f;
-        DrawTriangle(e.pos, r, l, Fade(c, 0.08f));
-        DrawLineV(e.pos, l, Fade(c, 0.18f));
-        DrawLineV(e.pos, r, Fade(c, 0.18f));
-    }
-    DrawCircleV(e.pos, e.radius, c);
-    Vector2 nose = e.pos + vFromAngle(e.facing) * (e.radius + 8);
-    DrawLineEx(e.pos, nose, 3.0f, WHITE);
-
-    // Health bar
-    float w = 36.0f;
-    float hp = e.health / 100.0f;
-    DrawRectangle((int)(e.pos.x - w / 2), (int)(e.pos.y - e.radius - 12), (int)w, 5, DARKGRAY);
-    DrawRectangle((int)(e.pos.x - w / 2), (int)(e.pos.y - e.radius - 12), (int)(w * hp), 5,
-                  hp > 0.5f ? GREEN : (hp > 0.25f ? YELLOW : RED));
+void Game::updateCamera() {
+    cam.position = {player.pos.x, EYE_H, player.pos.y};
+    Vector2 fwd = vFromAngle(player.facing);
+    float cp = std::cos(camPitch), sp = std::sin(camPitch);
+    cam.target = {cam.position.x + fwd.x * cp, cam.position.y + sp,
+                  cam.position.z + fwd.y * cp};
 }
 
-void Game::drawWorld() {
-    DrawRectangle(0, 0, PANEL_X, SCREEN_H, (Color){24, 26, 32, 255});
-    DrawRectangleLinesEx({0, 0, (float)PANEL_X, (float)SCREEN_H}, 2, (Color){60, 64, 74, 255});
+// First-person 3D view of the (planar) arena, rendered into sceneTex.
+void Game::drawScene3D() {
+    bool los = bot.alive && map.hasLineOfSight(player.pos, bot.pos);
+    botVisibleNow = xray || los;
 
-    // Crates (cover) drawn distinct from solid walls.
-    for (auto& w : map.walls) {
+    BeginTextureMode(sceneTex);
+    ClearBackground((Color){16, 18, 24, 255});
+    BeginMode3D(cam);
+
+    float mw = map.playArea.width, mh = map.playArea.height;
+    DrawPlane({mw / 2, 0, mh / 2}, {mw, mh}, (Color){34, 38, 46, 255});
+
+    // Walls (solid) and crates (cover) as boxes; full height so what you can see
+    // matches the bot's 2D line-of-sight logic exactly.
+    for (auto& wl : map.walls) {
         bool isCrate = false;
         for (auto& c : map.crates)
-            if (c.x == w.x && c.y == w.y) { isCrate = true; break; }
-        Color col = isCrate ? (Color){120, 95, 60, 255} : (Color){70, 75, 88, 255};
-        DrawRectangleRec(w, col);
-        DrawRectangleLinesEx(w, 1, (Color){40, 44, 52, 255});
+            if (c.x == wl.x && c.y == wl.y) { isCrate = true; break; }
+        Vector3 center = {wl.x + wl.width / 2, WALL_H / 2, wl.y + wl.height / 2};
+        Vector3 size = {wl.width, WALL_H, wl.height};
+        DrawCubeV(center, size, isCrate ? (Color){120, 95, 60, 255}
+                                        : (Color){74, 80, 94, 255});
+        DrawCubeWiresV(center, size, (Color){40, 44, 52, 255});
     }
 
-    // Named positions (faint).
-    for (auto& kv : map.named) {
-        DrawCircle((int)kv.second.x, (int)kv.second.y, 2.5f, Fade(GRAY, 0.5f));
-    }
-
-    // Where the bot has LEARNED the player tends to attack from (it pre-aims here).
+    // "Bot expects you" marker on the floor.
     if (playerModel.engageSamples >= 2) {
-        Vector2 e = {playerModel.favEngageX, playerModel.favEngageY};
-        DrawCircleLines((int)e.x, (int)e.y, 16, Fade(YELLOW, 0.7f));
-        DrawCircleLines((int)e.x, (int)e.y, 11, Fade(YELLOW, 0.4f));
-        DrawText("bot expects you", (int)e.x - 40, (int)e.y + 18, 10, Fade(YELLOW, 0.7f));
+        Vector3 e = {playerModel.favEngageX, 1.0f, playerModel.favEngageY};
+        DrawCylinderWires(e, 20, 20, 1.0f, 18, Fade(YELLOW, 0.6f));
     }
 
-    // Weapon pickups (only those not yet taken this round).
+    // Weapon pickups (bobbing boxes).
     for (size_t i = 0; i < map.weaponSpawns.size(); ++i) {
         if (i < pickupTaken.size() && pickupTaken[i]) continue;
         const WeaponPickup& wp = map.weaponSpawns[i];
         Color c = (wp.type == WeaponType::Rifle) ? (Color){90, 200, 120, 255}
                                                  : (Color){220, 160, 70, 255};
-        Rectangle rr = {wp.pos.x - 11, wp.pos.y - 11, 22, 22};
-        DrawRectangleRec(rr, Fade(c, 0.85f));
-        DrawRectangleLinesEx(rr, 2, WHITE);
-        const char* lbl = (wp.type == WeaponType::Rifle) ? "R" : "S";
-        DrawText(lbl, (int)wp.pos.x - 4, (int)wp.pos.y - 7, 16, BLACK);
+        float bob = 6.0f * std::sin((float)GetTime() * 3.0f);
+        Vector3 ctr = {wp.pos.x, 18.0f + bob, wp.pos.y};
+        DrawCubeV(ctr, {16, 16, 16}, c);
+        DrawCubeWiresV(ctr, {16, 16, 16}, WHITE);
     }
 
-    // Projectiles (gunfire is visible).
+    // Bot: drawn only when the player can see it; walls also occlude it via depth.
+    if (bot.alive && botVisibleNow) {
+        Color bc = (xray && !los) ? (Color){200, 80, 120, 255} : (Color){225, 60, 60, 255};
+        DrawCylinder(w3(bot.pos, 0), bot.radius, bot.radius, ENT_H, 18, bc);
+        DrawCylinderWires(w3(bot.pos, 0), bot.radius, bot.radius, ENT_H, 18,
+                          (Color){40, 20, 20, 255});
+        Vector2 nf = bot.pos + vFromAngle(bot.facing) * (bot.radius + 8);
+        DrawLine3D({bot.pos.x, ENT_H * 0.6f, bot.pos.y},
+                   {nf.x, ENT_H * 0.6f, nf.y}, WHITE);
+    }
+
+    // Projectiles.
     for (const auto& p : projectiles) {
         Color c = (p.owner == 0) ? (Color){120, 200, 255, 255} : (Color){255, 170, 90, 255};
-        DrawCircleV(p.pos, p.radius + 1.0f, c);
+        DrawSphere({p.pos.x, PROJ_Y, p.pos.y}, p.radius + 1.5f, c);
     }
 
-    // Fog of war: the player only sees the bot with line of sight (no wallhack),
-    // unless X-ray is toggled on.
-    botVisibleNow = xray || (bot.alive && map.hasLineOfSight(player.pos, bot.pos)) ||
-                    !bot.alive;
-    if (botVisibleNow) {
-        drawEntity(bot, xray && !(map.hasLineOfSight(player.pos, bot.pos)) ?
-                            (Color){200, 80, 120, 255} : RED, true);
-    } else {
-        // Hint where the bot was last seen by the PLAYER (fades out).
-        // (We simply don't draw the bot; the player must infer its position.)
+    // X-ray: reveal the bot through walls.
+    if (xray && bot.alive && !los) {
+        rlDisableDepthTest();
+        DrawSphere(w3(bot.pos, ENT_H + 12), 7, (Color){255, 120, 160, 255});
+        rlEnableDepthTest();
     }
-    drawEntity(player, SKYBLUE, false);
 
-    // X-ray indicator overlay.
-    if (xray) {
-        DrawText("X-RAY ON", 10, SCREEN_H - 26, 18, (Color){255, 120, 160, 255});
-    } else if (state == State::Playing && !botVisibleNow) {
-        DrawText("bot not in sight", 10, SCREEN_H - 26, 16, (Color){140, 145, 155, 255});
+    EndMode3D();
+    EndTextureMode();
+}
+
+// Small top-down minimap for orientation, drawn in the corner of the 3D view.
+void Game::drawMinimap() {
+    const float s = 0.18f;
+    int w = (int)(map.playArea.width * s);
+    int h = (int)(map.playArea.height * s);
+    int mx = 12, my = SCREEN_H - 12 - h;
+    auto P = [&](Vector2 p) { return Vector2{mx + p.x * s, my + p.y * s}; };
+
+    DrawRectangle(mx - 4, my - 4, w + 8, h + 8, Fade(BLACK, 0.55f));
+    DrawRectangleLines(mx - 4, my - 4, w + 8, h + 8, (Color){70, 74, 84, 255});
+
+    for (auto& wl : map.walls) {
+        bool crate = false;
+        for (auto& c : map.crates)
+            if (c.x == wl.x && c.y == wl.y) { crate = true; break; }
+        DrawRectangle((int)(mx + wl.x * s), (int)(my + wl.y * s),
+                      (int)(wl.width * s) + 1, (int)(wl.height * s) + 1,
+                      crate ? (Color){120, 95, 60, 255} : (Color){90, 96, 110, 255});
     }
+    for (size_t i = 0; i < map.weaponSpawns.size(); ++i) {
+        if (i < pickupTaken.size() && pickupTaken[i]) continue;
+        const WeaponPickup& wp = map.weaponSpawns[i];
+        DrawCircleV(P(wp.pos), 2.5f, wp.type == WeaponType::Rifle
+                                         ? (Color){90, 200, 120, 255}
+                                         : (Color){220, 160, 70, 255});
+    }
+    if (playerModel.engageSamples >= 2)
+        DrawCircleLines((int)P({playerModel.favEngageX, playerModel.favEngageY}).x,
+                        (int)P({playerModel.favEngageX, playerModel.favEngageY}).y, 4,
+                        Fade(YELLOW, 0.8f));
+    if (bot.alive && botVisibleNow) DrawCircleV(P(bot.pos), 3, RED);
+    Vector2 pp = P(player.pos);
+    DrawCircleV(pp, 3, SKYBLUE);
+    DrawLineV(pp, pp + vFromAngle(player.facing) * 9.0f, WHITE);
+}
+
+void Game::drawHud() {
+    int cx = PANEL_X / 2, cy = SCREEN_H / 2;
+    Color cross = Fade(WHITE, 0.8f);
+    DrawLine(cx - 9, cy, cx - 3, cy, cross);
+    DrawLine(cx + 3, cy, cx + 9, cy, cross);
+    DrawLine(cx, cy - 9, cx, cy - 3, cross);
+    DrawLine(cx, cy + 3, cx, cy + 9, cross);
+
+    DrawText(TextFormat("Time %.1f / %.0f", roundTime, roundTimeLimit), 12, 10, 18, WHITE);
+    WeaponStats ws = weaponStats(player.weapon);
+    const char* ammoTxt = (player.ammo < 0) ? "" : TextFormat(" x%d", player.ammo);
+    DrawText(TextFormat("%s%s", ws.name, ammoTxt), 12, 32, 18, (Color){255, 220, 140, 255});
+
+    // HP bars (player; and bot only when visible).
+    int hpw = 160;
+    DrawRectangle(12, SCREEN_H - 30, hpw, 12, (Color){45, 48, 56, 255});
+    DrawRectangle(12, SCREEN_H - 30, (int)(hpw * clampf(player.health / 100.0f, 0, 1)), 12,
+                  (Color){90, 200, 120, 255});
+    DrawText("HP", 12, SCREEN_H - 46, 12, WHITE);
+    if (bot.alive && botVisibleNow) {
+        DrawRectangle(12, SCREEN_H - 62, hpw, 8, (Color){45, 48, 56, 255});
+        DrawRectangle(12, SCREEN_H - 62, (int)(hpw * clampf(bot.health / 100.0f, 0, 1)), 8,
+                      (Color){225, 90, 90, 255});
+        DrawText("BOT", 12, SCREEN_H - 74, 12, (Color){225, 120, 120, 255});
+    }
+
+    if (xray) DrawText("X-RAY ON", PANEL_X - 96, 10, 16, (Color){255, 120, 160, 255});
+    else if (!botVisibleNow) DrawText("bot not in sight", cx - 50, cy + 16, 14,
+                                      (Color){150, 155, 165, 255});
 }
 
 static int drawWrapped(const std::string& text, int x, int y, int width, int fontSize,
@@ -770,18 +854,25 @@ void Game::drawDebugPanel() {
     y = drawWrapped(llmRaw, x, y, w, 10, (Color){150, 200, 150, 255}, maxLines);
 
     // Controls footer
-    DrawText("WASD move | Mouse aim | LMB shoot | SPACE start",
+    DrawText("WASD move | Mouse look | LMB shoot | SPACE start",
              x, SCREEN_H - 26, 10, (Color){120, 125, 135, 255});
     DrawText("X x-ray bot | L recheck LLM | Esc quit",
              x, SCREEN_H - 14, 10, (Color){120, 125, 135, 255});
 }
 
 void Game::draw() {
+    drawScene3D(); // renders the first-person view into sceneTex
+
     BeginTextureMode(renderTarget);
     ClearBackground((Color){12, 13, 16, 255});
 
-    drawWorld();
+    // Blit the 3D scene into the left region.
+    DrawTexturePro(sceneTex.texture, {0, 0, (float)PANEL_X, -(float)SCREEN_H},
+                   {0, 0, (float)PANEL_X, (float)SCREEN_H}, {0, 0}, 0.0f, WHITE);
+
     drawDebugPanel();
+    drawMinimap();
+    if (state == State::Playing) drawHud();
 
     // Overlays
     if (state == State::Intro) {
@@ -816,14 +907,6 @@ void Game::draw() {
         DrawText(t2, PANEL_X / 2 - tw2 / 2, SCREEN_H / 2 + 10, 18, WHITE);
     }
 
-    if (state == State::Playing) {
-        DrawText(TextFormat("Time %.1f / %.0f", roundTime, roundTimeLimit), 10, 10, 18, WHITE);
-        WeaponStats ws = weaponStats(player.weapon);
-        const char* ammoTxt = (player.ammo < 0) ? "" : TextFormat(" x%d", player.ammo);
-        DrawText(TextFormat("Weapon: %s%s", ws.name, ammoTxt), 10, 32, 18,
-                 (Color){255, 220, 140, 255});
-    }
-
     EndTextureMode();
 
     // Letterbox-scale the virtual frame to the actual (resizable) window.
@@ -851,6 +934,8 @@ void Game::run() {
 
     renderTarget = LoadRenderTexture(SCREEN_W, SCREEN_H);
     SetTextureFilter(renderTarget.texture, TEXTURE_FILTER_BILINEAR);
+    sceneTex = LoadRenderTexture(PANEL_X, SCREEN_H); // 3D view (left region)
+    SetTextureFilter(sceneTex.texture, TEXTURE_FILTER_BILINEAR);
 
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
@@ -871,6 +956,7 @@ void Game::run() {
     }
 
     UnloadRenderTexture(renderTarget);
+    UnloadRenderTexture(sceneTex);
     Log::shutdown();
     CloseWindow();
 }
